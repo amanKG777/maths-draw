@@ -112,35 +112,75 @@ def _threaded_capture(dialog, index):
 	else:
 		wx.CallAfter(ui.message, "No clear geometric figure detected in camera view.")
 
+def _get_shape_name(c):
+	peri = cv2.arcLength(c, True)
+	approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+	if len(approx) == 3: return "triangle"
+	elif len(approx) == 4:
+		(x, y, w, h) = cv2.boundingRect(approx)
+		ar = w / float(h)
+		return "square" if ar >= 0.95 and ar <= 1.05 else "rectangle"
+	elif len(approx) > 4: return "circle"
+	return None
+
 def _detect_shape_in_frame(frame):
 	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 	blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 	thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY_INV)[1]
 
-	contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+	contours, hierarchy = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 	
-	best_desc = None
-	max_area = 0
+	if hierarchy is None: return None
+	hierarchy = hierarchy[0]
 	
-	for c in contours:
+	shape_info = []
+	for i, c in enumerate(contours):
 		area = cv2.contourArea(c)
-		if area < 1000: continue # Skip small noise
+		if area < 500: continue # Skip noise
 		
-		peri = cv2.arcLength(c, True)
-		approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+		name = _get_shape_name(c)
+		if name:
+			parent_idx = hierarchy[i][3]
+			shape_info.append({'idx': i, 'name': name, 'area': area, 'parent': parent_idx})
+		elif area < 1500: # Potential label
+			shape_info.append({'idx': i, 'name': 'label', 'area': area, 'parent': hierarchy[i][3]})
+
+	if not shape_info: return None
+
+	# Filter: if a shape has a child that is also a shape, we focus on the relationship
+	descriptions = []
+	processed_indices = set()
+
+	for info in shape_info:
+		if info['idx'] in processed_indices: continue
 		
-		if area > max_area:
-			max_area = area
-			if len(approx) == 3:
-				best_desc = "a triangle"
-			elif len(approx) == 4:
-				(x, y, w, h) = cv2.boundingRect(approx)
-				ar = w / float(h)
-				best_desc = "a square" if ar >= 0.95 and ar <= 1.05 else "a rectangle"
-			elif len(approx) > 4:
-				best_desc = "a circle-like shape"
+		if info['name'] == 'label': continue # Handled by parents
+		
+		# Find children
+		children = [s for s in shape_info if s['parent'] == info['idx']]
+		if children:
+			for child in children:
+				if child['name'] == 'label':
+					descriptions.append(f"a {info['name']} labeled L")
+				else:
+					descriptions.append(f"a {child['name']} inside a {info['name']}")
+				processed_indices.add(child['idx'])
+			processed_indices.add(info['idx'])
+		else:
+			# No children, check if it's already a child (handled above)
+			if info['parent'] == -1 or info['parent'] not in [s['idx'] for s in shape_info]:
+				descriptions.append(f"a {info['name']}")
+				processed_indices.add(info['idx'])
+
+	if not descriptions: return None
 	
-	return best_desc
+	# Clean up: "a square inside a square" + "a square" -> just "a square inside a square"
+	# (Actually the logic above should handle it)
+	
+	res = " and ".join(list(set(descriptions)))
+	# Resilience: "a square inside a square" -> "a square inside another square"
+	res = res.replace("a square inside a square", "a square inside another square")
+	return res
 
 def _ask_to_draw(dialog, frame, description):
 	res = wx.MessageBox(f"Detected {description}. Should I draw it?", "Shape Detected", wx.YES_NO | wx.ICON_QUESTION)
