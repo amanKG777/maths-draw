@@ -107,18 +107,22 @@ def parse_shape(desc, default_scale=400):
 		return {'title': title, 'ops': ops, 'bounds': (w, h)}
 		
 	elif found_shape == 'triangle':
-		s1 = nums[0] if len(nums) > 0 else 10
-		s2 = nums[1] if len(nums) > 1 else s1
-		scale = get_best_scale(max(s1, s2), default_scale)
-		s1, s2 = s1*scale, s2*scale
+		base = nums[0] if len(nums) > 0 else 10
+		height = nums[1] if len(nums) > 1 else base
+		scale = get_best_scale(max(base, height), default_scale)
+		b, h = base * scale, height * scale
 		cx, cy = 250, 250
 		if 'right' in desc.lower():
-			pts = [(cx - s1/2, cy + s2/2), (cx + s1/2, cy + s2/2), (cx - s1/2, cy - s2/2)]
+			pts = [(cx - b/2, cy + h/2), (cx + b/2, cy + h/2), (cx - b/2, cy - h/2)]
+			title = f"A right triangle with base {base} and height {height}"
 		else:
-			pts = [(cx, cy - s1/2), (cx - s1/2, cy + s1/2), (cx + s1*0.8, cy + s1/2)]
+			# Isosceles. The old apex sat at cx + base*0.8, which made the shape
+			# 1.3 times wider than the scale allowed for, so the right-hand
+			# vertex was pushed off the edge of the canvas.
+			pts = [(cx, cy - h/2), (cx - b/2, cy + h/2), (cx + b/2, cy + h/2)]
+			title = f"A triangle with base {base} and height {height}"
 		ops = [{'type': 'polygon', 'points': pts}]
-		title = "A triangle"
-		return {'title': title, 'ops': ops, 'bounds': (s1, s1)}
+		return {'title': title, 'ops': ops, 'bounds': (b, h)}
 		
 	elif found_shape in ['pentagon', 'hexagon', 'octagon']:
 		sides = {'pentagon': 5, 'hexagon': 6, 'octagon': 8}[found_shape]
@@ -133,6 +137,27 @@ def parse_shape(desc, default_scale=400):
 		title = f"A regular {found_shape}"
 		return {'title': title, 'ops': ops, 'bounds': (r*2, r*2)}
 		
+	elif found_shape == 'parallelogram':
+		base = nums[0] if len(nums) > 0 else 10
+		height = nums[1] if len(nums) > 1 else base / 2
+		# The slanted top edge sticks out past the base, so the lean has to be
+		# part of the width used for scaling or the shape runs off the canvas.
+		lean = 0.4
+		scale = get_best_scale(max(base + height * lean, height), default_scale)
+		b, h = base * scale, height * scale
+		slant = h * lean
+		cx, cy = 250, 250
+		left = cx - (b + slant) / 2
+		pts = [
+			(left, cy + h/2),
+			(left + b, cy + h/2),
+			(left + b + slant, cy - h/2),
+			(left + slant, cy - h/2),
+		]
+		ops = [{'type': 'polygon', 'points': pts}]
+		title = f"A parallelogram with base {base} and height {height}"
+		return {'title': title, 'ops': ops, 'bounds': (b + slant, h)}
+
 	elif found_shape == 'rhombus':
 		d1 = nums[0] if len(nums) > 0 else 10
 		d2 = nums[1] if len(nums) > 1 else d1

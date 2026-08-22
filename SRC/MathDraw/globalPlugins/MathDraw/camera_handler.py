@@ -1,15 +1,13 @@
+import math
+
 import wx
-import threading
-import ui
-import tones
-import os
-import tempfile
+
 import logHandler
+import ui
 log = logHandler.log
 
 try:
 	import cv2
-	import numpy as np
 	HAS_CV2 = True
 except ImportError:
 	HAS_CV2 = False
@@ -19,8 +17,6 @@ try:
 	HAS_PYGRABBER = True
 except ImportError:
 	HAS_PYGRABBER = False
-
-from . import local_geometry
 
 class DeviceChooser(wx.Dialog):
 	def __init__(self, parent, devices):
@@ -188,14 +184,24 @@ def capture_and_draw(dialog):
 
 def _get_shape_name(c):
 	peri = cv2.arcLength(c, True)
+	if peri <= 0: return None
 	approx = cv2.approxPolyDP(c, 0.04 * peri, True)
-	if len(approx) == 3: return "triangle"
-	elif len(approx) == 4:
+	sides = len(approx)
+	if sides == 3: return "triangle"
+	if sides == 4:
 		(x, y, w, h) = cv2.boundingRect(approx)
+		if h == 0: return None
 		ar = w / float(h)
-		return "square" if ar >= 0.95 and ar <= 1.05 else "rectangle"
-	elif len(approx) > 4: return "circle"
-	return None
+		return "square" if 0.95 <= ar <= 1.05 else "rectangle"
+	if sides == 5: return "pentagon"
+	if sides == 6: return "hexagon"
+	if sides == 8: return "octagon"
+	# Everything with more than four corners used to be called a circle, so a
+	# hexagon on paper came back as "a circle". Only accept a circle if the
+	# contour is actually round; a wobbly 7 or 9 sided outline is usually noise.
+	area = cv2.contourArea(c)
+	circularity = 4 * math.pi * area / (peri * peri)
+	return "circle" if circularity > 0.8 else None
 
 def _detect_shape_in_frame(frame):
 	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
