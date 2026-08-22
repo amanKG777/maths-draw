@@ -47,7 +47,6 @@ class MathDrawDialog(
 		)
 		self.current_drawing = None
 		self.current_description = ""
-		self.explore_ops = []
 		self.history = cache.get_history()
 		self.history_index = len(self.history)
 		self.is_drawing = False
@@ -73,15 +72,6 @@ class MathDrawDialog(
 		self.camera_button = input_buttons.addButton(self, label=_("Draw from &Camera..."))
 		self.camera_button.Bind(wx.EVT_BUTTON, self.on_draw_from_camera)
 		sHelper.addItem(input_buttons)
-
-		# Translators: Label for the list used to explore a drawing element by element.
-		self.explore_list = sHelper.addLabeledControl(
-			_("&Explore the figure (arrow through the elements):"),
-			wx.ListBox,
-			size=(400, 120),
-		)
-		self.explore_list.Bind(wx.EVT_LISTBOX, self.on_explore_selected)
-		self.explore_list.Disable()
 
 		action_buttons = guiHelper.ButtonHelper(wx.HORIZONTAL)
 		# Translators: Button to save the drawing to a file.
@@ -187,9 +177,6 @@ class MathDrawDialog(
 		self.draw_button.Enable()
 		if not drawing:
 			self.current_drawing = None
-			self.explore_ops = []
-			self.explore_list.Clear()
-			self.explore_list.Disable()
 			self.download_button.Disable()
 			self.copy_button.Disable()
 			# Translators: Reported when a description could not be turned into a drawing.
@@ -206,7 +193,6 @@ class MathDrawDialog(
 		tones.beep(880, 100)
 		self.download_button.Enable()
 		self.copy_button.Enable()
-		self._populate_explore_list(drawing)
 		self.history = cache.get_history()
 		self.history_index = len(self.history)
 
@@ -216,47 +202,6 @@ class MathDrawDialog(
 		self.Layout()
 		if speak:
 			ui.message(message)
-
-	# -- Explore mode -------------------------------------------------------
-
-	def _populate_explore_list(self, drawing):
-		self.explore_ops = drawing.get("ops", [])
-		self.explore_list.Set([description_service.describe_op(op) for op in self.explore_ops])
-		self.explore_list.Enable(bool(self.explore_ops))
-
-	def on_explore_selected(self, event):
-		index = self.explore_list.GetSelection()
-		if index == wx.NOT_FOUND or index >= len(self.explore_ops):
-			return
-		self._sonify(self.explore_ops[index])
-
-	def _sonify(self, op):
-		"""Convey an element's position with pitch (vertical) and stereo pan (horizontal)."""
-		x, y = self._anchor_of(op)
-		# Top of the canvas is a high note, the bottom is a low one.
-		frequency = 200 + (1 - min(max(y / CANVAS, 0), 1)) * 1200
-		pan = min(max(x / CANVAS, 0), 1)
-		try:
-			tones.beep(frequency, 90, left=int((1 - pan) * 100), right=int(pan * 100))
-		except TypeError:
-			# Older NVDA builds do not accept the stereo arguments.
-			tones.beep(frequency, 90)
-
-	def _anchor_of(self, op):
-		kind = op.get("type")
-		if kind in ("circle", "ellipse", "arc"):
-			return op["cx"], op["cy"]
-		if kind == "rect":
-			return op["x"] + op["w"] / 2, op["y"] + op["h"] / 2
-		if kind == "line":
-			return (op["x1"] + op["x2"]) / 2, (op["y1"] + op["y2"]) / 2
-		if kind == "polygon":
-			pts = op["points"]
-			return (
-				sum(p[0] for p in pts) / len(pts),
-				sum(p[1] for p in pts) / len(pts),
-			)
-		return op.get("x", CANVAS / 2), op.get("y", CANVAS / 2)
 
 	# -- Export -------------------------------------------------------------
 

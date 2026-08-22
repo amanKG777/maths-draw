@@ -97,31 +97,4 @@ def get_fast_description(data):
 	summary = f"{title}."
 	if details:
 		summary += " The figure contains " + ", ".join(details) + "."
-	summary += " Press Tab to reach Explore mode to examine it point by point."
 	return summary
-
-
-def describe_op(op):
-	"""A short spoken label for a single drawing element, used by Explore mode."""
-	kind = op.get("type")
-	if kind == "circle":
-		return f"Circle, radius {op['r']:.0f} pixels, centred in {_region(op['cx'], op['cy'])}"
-	if kind == "ellipse":
-		return f"Ellipse in {_region(op['cx'], op['cy'])}"
-	if kind == "rect":
-		name = "Square" if abs(op["w"] - op["h"]) < 1 else "Rectangle"
-		return f"{name}, {op['w']:.0f} by {op['h']:.0f} pixels, in {_region(op['x'], op['y'])}"
-	if kind == "polygon":
-		return f"{_polygon_name(op['points']).capitalize()} with {len(op['points'])} vertices"
-	if kind == "line":
-		return (
-			f"Line from {_region(op['x1'], op['y1'])} to {_region(op['x2'], op['y2'])}"
-		)
-	if kind == "arc":
-		return f"Arc from {op['start_deg']:.0f} to {op['end_deg']:.0f} degrees"
-	if kind == "point":
-		label = op.get("label")
-		return f"Point {label}" if label else f"Point in {_region(op['x'], op['y'])}"
-	if kind == "text":
-		return f"Label: {op['text']}"
-	return kind or "Unknown element"
