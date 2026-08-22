@@ -54,6 +54,8 @@ def get_device_list():
 			log.error(f"Failed to get devices via pygrabber: {e}")
 	
 	# Fallback or if pygrabber fails
+	if not HAS_CV2:
+		return []
 	devices = []
 	for i in range(5):
 		cap = cv2.VideoCapture(i)
@@ -99,9 +101,22 @@ class CameraDialog(wx.Dialog):
 		
 		self.last_frame = None
 		self.is_captured = False
+		self.Bind(wx.EVT_CLOSE, self.on_close)
+
+	def release(self):
+		"""Stop the preview and hand the capture device back to the system."""
+		if self.timer.IsRunning():
+			self.timer.Stop()
+		if self.cap is not None:
+			self.cap.release()
+			self.cap = None
+
+	def on_close(self, event):
+		self.release()
+		event.Skip()
 
 	def on_timer(self, event):
-		if self.is_captured: return
+		if self.is_captured or self.cap is None: return
 		ret, frame = self.cap.read()
 		if ret:
 			self.last_frame = frame
@@ -121,11 +136,12 @@ class CameraDialog(wx.Dialog):
 			self.preview_bmp.SetBitmap(bmp)
 
 	def on_capture(self, event):
-		if self.last_frame is not None:
-			self.is_captured = True
-			self.timer.Stop()
-			self.cap.release()
-			self.EndModal(wx.ID_OK)
+		if self.last_frame is None:
+			ui.message("No frame captured yet. Please wait for the preview.")
+			return
+		self.is_captured = True
+		self.release()
+		self.EndModal(wx.ID_OK)
 
 	def get_frame(self):
 		return self.last_frame
@@ -143,19 +159,32 @@ def capture_and_draw(dialog):
 	camera_index = 0
 	if len(devices) > 1:
 		chooser = DeviceChooser(dialog, devices)
-		if chooser.ShowModal() == wx.ID_OK:
+		try:
+			if chooser.ShowModal() != wx.ID_OK:
+				return
 			camera_index = chooser.get_selected_index()
-		else:
-			return
+		finally:
+			chooser.Destroy()
 
 	cam_dialog = CameraDialog(dialog, camera_index)
-	if cam_dialog.ShowModal() == wx.ID_OK:
+	if not cam_dialog.cap.isOpened():
+		cam_dialog.release()
+		cam_dialog.Destroy()
+		ui.message("Could not open the selected camera. It may be in use by another program.")
+		return
+	try:
+		if cam_dialog.ShowModal() != wx.ID_OK:
+			return
 		frame = cam_dialog.get_frame()
 		description = _detect_shape_in_frame(frame)
-		if description:
-			_ask_to_draw(dialog, frame, description)
-		else:
-			ui.message("No clear geometric figure detected.")
+	finally:
+		cam_dialog.release()
+		cam_dialog.Destroy()
+
+	if description:
+		_ask_to_draw(dialog, frame, description)
+	else:
+		ui.message("No clear geometric figure detected.")
 
 def _get_shape_name(c):
 	peri = cv2.arcLength(c, True)
@@ -228,8 +257,8 @@ def _detect_shape_in_frame(frame):
 	return res
 
 def _ask_to_draw(dialog, frame, description):
-	res = wx.MessageBox(f"Detected {description}. Should I draw it?", "Shape Detected", wx.YES_NO | wx.ICON_QUESTION)
-	if res == wx.ID_YES:
+	res = wx.MessageBox(f"Detected {description}. Should I draw it?", "Shape Detected", wx.YES_NO | wx.ICON_QUESTION, dialog)
+	if res == wx.YES:
 		# Use the description to draw locally
 		# In a real scenario, we might extract dimensions from the contour,
 		# but for now we'll just use the detected description.

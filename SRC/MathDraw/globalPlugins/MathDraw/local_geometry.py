@@ -1,6 +1,7 @@
 import math
 import re
 import difflib
+from xml.sax.saxutils import escape as _xml_escape
 
 def get_best_scale(max_dim, target=400):
 	if max_dim <= 0: return 1
@@ -151,10 +152,10 @@ def find_local_match(description, is_recursive=False):
 	desc = description.lower()
 	
 	# Detect relationships
-	inside_match = re.search(r'(.*?)\s+(inside|in|inscribed in)\s+(.*)', desc)
+	inside_match = re.search(r'(.+?)\s+\b(?:inscribed\s+in|inside(?:\s+of)?|within)\b\s+(.+)', desc)
 	if inside_match:
 		inner_desc = inside_match.group(1).strip()
-		outer_desc = inside_match.group(3).strip()
+		outer_desc = inside_match.group(2).strip()
 		
 		inner_res = parse_shape(inner_desc)
 		outer_res = parse_shape(outer_desc)
@@ -167,13 +168,15 @@ def find_local_match(description, is_recursive=False):
 				ow, oh = outer_res['bounds']
 				iw, ih = inner_res['bounds']
 				# For square in circle, diagonal = diameter
-				if 'square' in inner_desc and 'circle' in outer_desc:
+				if 'square' in inner_desc and 'circle' in outer_desc and iw > 0:
 					# circle diameter is ow. Square diagonal is ow.
 					# Square side = ow / sqrt(2)
 					target_side = ow / math.sqrt(2)
 					scale_factor = target_side / iw
-				else:
+				elif iw > 0 and ih > 0:
 					scale_factor = min(ow/iw, oh/ih) * 0.95 # slightly smaller or exact
+				else:
+					scale_factor = 0.5
 			else:
 				scale_factor = 0.5
 				
@@ -202,16 +205,14 @@ def find_local_match(description, is_recursive=False):
 				px = 250 + x * scale
 				py = 250 - y * scale
 				label = chr(65 + i) # A, B, C...
-				ops.append({'type': 'circle', 'cx': px, 'cy': py, 'r': 4})
-				ops.append({'type': 'text', 'x': px + 15, 'y': py - 15, 'text': f"{label}({x},{y})"})
+				ops.append({'type': 'point', 'x': px, 'y': py, 'label': f"{label}({x:g},{y:g})"})
 				
 			return {'title': "Coordinate Plane with points", 'ops': ops}
-		elif 'origin' in desc or 'axis' in desc:
-			return {'title': "Coordinate Plane", 'ops': ops}
+		return {'title': "Coordinate Plane", 'ops': ops}
 
 
 	# Angles
-	angle_match = re.search(r'angle\s*(?:of)?\s*(\d+)\s*(?:degrees|deg)?', desc)
+	angle_match = re.search(r'\bangle\s*(?:of)?\s*(\d+)\s*(?:degrees|deg)?', desc)
 	if angle_match:
 		deg = float(angle_match.group(1))
 		rad = math.radians(deg)
@@ -357,16 +358,13 @@ def find_local_match(description, is_recursive=False):
 	if res:
 		return {'title': res['title'], 'ops': res['ops']}
 		
-	# Fallback if entirely failed
-	return {
-		'title': 'Default Drawing (Could not parse description)', 
-		'ops': [{'type': 'circle', 'cx': 250, 'cy': 250, 'r': 150},
-				{'type': 'text', 'x': 250, 'y': 250, 'text': 'Unrecognized description'}]
-	}
+	# Nothing matched. Returning None lets the caller report a real failure
+	# rather than caching a placeholder drawing under this description.
+	return None
 
 def get_svg_from_instr(instr):
 	svg = f'<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">\n'
-	svg += f'  <title>{instr.get("title", "Math Drawing")}</title>\n'
+	svg += f'  <title>{_xml_escape(instr.get("title", "Math Drawing"))}</title>\n'
 	svg += f'  <rect width="100%" height="100%" fill="white"/>\n'
 	for op in instr.get('ops', []):
 		t = op['type']
@@ -382,7 +380,7 @@ def get_svg_from_instr(instr):
 		elif t == 'line':
 			svg += f'  <line x1="{op["x1"]}" y1="{op["y1"]}" x2="{op["x2"]}" y2="{op["y2"]}" stroke="#003399" stroke-width="3" />\n'
 		elif t == 'text':
-			svg += f'  <text x="{op["x"]}" y="{op["y"]}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#001a4d">{op["text"]}</text>\n'
+			svg += f'  <text x="{op["x"]}" y="{op["y"]}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#001a4d">{_xml_escape(op["text"])}</text>\n'
 		elif t == 'arc':
 			import math
 			r = op['r']
@@ -396,6 +394,6 @@ def get_svg_from_instr(instr):
 			svg += f'  <path d="M {x1} {y1} A {r} {r} 0 {large_arc} 1 {x2} {y2}" stroke="#003399" stroke-width="3" fill="none" />\n'
 		elif t == 'point':
 			svg += f'  <circle cx="{op["x"]}" cy="{op["y"]}" r="4" fill="#001a4d" />\n'
-			if 'label' in op: svg += f'  <text x="{op["x"]+8}" y="{op["y"]-8}" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#001a4d">{op["label"]}</text>\n'
+			if 'label' in op: svg += f'  <text x="{op["x"]+8}" y="{op["y"]-8}" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#001a4d">{_xml_escape(op["label"])}</text>\n'
 	svg += '</svg>'
 	return svg
