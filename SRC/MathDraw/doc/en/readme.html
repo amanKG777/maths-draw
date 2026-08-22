@@ -123,9 +123,17 @@ anyone reading it with a screen reader gets the description too.</p>
 it is, and offers to redraw it. The preview tells you how clear the picture is,
 so you can steady the camera before taking it.</p>
 
-<p><strong>This needs OpenCV, which is not included with the add-on.</strong> Without
-it the button will report that OpenCV was not found and nothing else will happen.
-The rest of Math Draw works normally either way.</p>
+<p>This part needs OpenCV, which is too large to ship inside the add-on. The first
+time you press Draw from Camera you will be asked whether you want to download
+it - it is around 55 MB. Nothing is downloaded unless you say yes.</p>
+
+<p>The download runs in the background, so you can carry on describing and drawing
+shapes while it works. A progress bar shows how far along it is and the
+percentage is spoken every ten percent. You can cancel at any point; nothing is
+installed unless the whole download finishes and passes its checksum.</p>
+
+<p>This only happens once. After that the files are kept in your NVDA
+configuration folder and Math Draw is fully offline again, camera included.</p>
 
 <h2>If a description isn't understood</h2>
 

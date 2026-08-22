@@ -1,22 +1,186 @@
 import math
+import threading
 
 import wx
 
+import gui
 import logHandler
 import ui
+from gui import guiHelper
 log = logHandler.log
 
+from . import opencv_installer
+
 try:
-	import cv2
-	HAS_CV2 = True
-except ImportError:
-	HAS_CV2 = False
+	import addonHandler
+	addonHandler.initTranslation()
+except Exception:
+	def _(text):
+		return text
+
+#: Bound lazily. OpenCV may be downloaded while NVDA is running, so this cannot
+#: be settled once at import time the way a normal import would be.
+cv2 = None
+
+
+def _load_cv2():
+	global cv2
+	if cv2 is not None:
+		return True
+	opencv_installer.add_to_path()
+	try:
+		import cv2 as _cv2
+	except Exception:
+		return False
+	cv2 = _cv2
+	return True
+
 
 try:
 	from pygrabber import dshow_graph
 	HAS_PYGRABBER = True
 except ImportError:
 	HAS_PYGRABBER = False
+
+class InstallDialog(wx.Dialog):
+	"""Downloads the camera libraries without holding up the rest of NVDA.
+
+	The dialog is modeless and the work happens on a worker thread, so Math Draw
+	stays usable while a fifty megabyte download runs in the background.
+	"""
+
+	def __init__(self, parent, on_finished=None):
+		super().__init__(parent, title=_("Downloading camera support"))
+		self._on_finished = on_finished
+		self._cancel = threading.Event()
+		self._last_announced = -1
+
+		main_sizer = wx.BoxSizer(wx.VERTICAL)
+		sHelper = guiHelper.BoxSizerHelper(self, sizer=main_sizer)
+
+		# Translators: Label for the download progress bar.
+		self.gauge = sHelper.addLabeledControl(
+			_("Download progress:"), wx.Gauge, range=100, size=(320, -1)
+		)
+
+		buttons = guiHelper.ButtonHelper(wx.HORIZONTAL)
+		# Translators: Button that stops the download.
+		self.cancel_button = buttons.addButton(self, label=_("&Cancel"), id=wx.ID_CANCEL)
+		self.cancel_button.Bind(wx.EVT_BUTTON, self.on_cancel)
+		sHelper.addItem(buttons)
+
+		# Kept last so it cannot be mistaken for the label of another control.
+		# Translators: Shows what the downloader is currently doing.
+		self.status = sHelper.addItem(wx.StaticText(self, label=_("Starting...")))
+
+		self.SetEscapeId(wx.ID_CANCEL)
+		self.Bind(wx.EVT_CLOSE, self.on_close)
+		self.SetSizer(main_sizer)
+		main_sizer.Fit(self)
+		self.CentreOnScreen()
+
+		threading.Thread(target=self._worker, daemon=True).start()
+
+	# -- worker side (background thread) ------------------------------------
+
+	def _worker(self):
+		try:
+			opencv_installer.install(
+				on_progress=lambda done, total: wx.CallAfter(self._set_progress, done, total),
+				on_status=lambda text: wx.CallAfter(self._set_status, text),
+				should_cancel=self._cancel.is_set,
+			)
+		except opencv_installer.CancelledError:
+			wx.CallAfter(self._finish, None)
+			return
+		except Exception as e:
+			log.error("MathDraw: camera library download failed.", exc_info=True)
+			wx.CallAfter(self._finish, e)
+			return
+		wx.CallAfter(self._finish, True)
+
+	# -- GUI side ------------------------------------------------------------
+
+	def _set_status(self, text):
+		if self:
+			self.status.SetLabel(text)
+			self.Layout()
+
+	def _set_progress(self, done, total):
+		if not self or not total:
+			return
+		percent = int(done * 100 / total)
+		self.gauge.SetValue(min(percent, 100))
+		# NVDA beeps for the progress bar itself; a spoken figure every tenth
+		# gives a clearer sense of how much is left without being chatty.
+		if percent >= self._last_announced + 10:
+			self._last_announced = percent - (percent % 10)
+			megabytes = total / 1024 / 1024
+			# Translators: {percent} is a number, {size} the download size in MB.
+			ui.message(_("{percent} percent of {size:.0f} megabytes").format(
+				percent=self._last_announced, size=megabytes))
+
+	def on_cancel(self, event):
+		self._cancel.set()
+		# Translators: Reported when the user stops the download.
+		self._set_status(_("Cancelling..."))
+		self.cancel_button.Disable()
+
+	def on_close(self, event):
+		self._cancel.set()
+		self.Destroy()
+
+	def _finish(self, outcome):
+		callback = self._on_finished
+		try:
+			self.Destroy()
+		except RuntimeError:
+			pass
+		if outcome is True:
+			if _load_cv2():
+				# Translators: Reported when the camera libraries are ready.
+				ui.message(_("Camera support installed. You can use Draw from Camera now."))
+				if callback:
+					callback()
+			else:
+				# Translators: Reported when the libraries downloaded but will not load.
+				ui.message(_("The download finished but OpenCV still will not load. Restarting NVDA may help."))
+		elif outcome is None:
+			# Translators: Reported after the user cancels the download.
+			ui.message(_("Download cancelled."))
+		else:
+			# Translators: {error} is the reason the download failed.
+			ui.message(_("Could not install camera support: {error}").format(error=outcome))
+
+
+def offer_install(parent, on_finished=None):
+	"""Ask before downloading anything, then run the download in the background."""
+	if opencv_installer.is_installed() or _load_cv2():
+		return True
+
+	try:
+		_wheels, total = opencv_installer.plan()
+		size_text = _("about {size:.0f} MB").format(size=total / 1024 / 1024)
+	except Exception:
+		log.error("MathDraw: could not reach PyPI.", exc_info=True)
+		# Translators: Reported when the size of the download cannot be looked up.
+		ui.message(_("Could not check the download. Please make sure you are online and try again."))
+		return False
+
+	message = _(
+		"Drawing from the camera needs OpenCV, which is not included with the add-on.\n\n"
+		"It can be downloaded now ({size}). This happens once - after that the "
+		"add-on works offline as usual.\n\n"
+		"Download it now?"
+	).format(size=size_text)
+	# Translators: Title of the prompt offering to download camera support.
+	if wx.MessageBox(message, _("Camera support needed"), wx.YES_NO | wx.ICON_QUESTION, parent) != wx.YES:
+		return False
+
+	dialog = InstallDialog(parent, on_finished)
+	dialog.Show()
+	return False
+
 
 class DeviceChooser(wx.Dialog):
 	def __init__(self, parent, devices):
@@ -50,7 +214,7 @@ def get_device_list():
 			log.error(f"Failed to get devices via pygrabber: {e}")
 	
 	# Fallback or if pygrabber fails
-	if not HAS_CV2:
+	if not _load_cv2():
 		return []
 	devices = []
 	for i in range(5):
@@ -143,8 +307,9 @@ class CameraDialog(wx.Dialog):
 		return self.last_frame
 
 def capture_and_draw(dialog):
-	if not HAS_CV2:
-		ui.message("Error: OpenCV (cv2) not found. Cannot use camera features.")
+	if not _load_cv2():
+		# Offers the download and returns; the camera opens once it finishes.
+		offer_install(dialog, on_finished=lambda: capture_and_draw(dialog))
 		return
 
 	devices = get_device_list()

@@ -22,6 +22,7 @@ from . import cache
 from . import config_handler as ch
 from . import description_service
 from . import local_geometry
+from . import opencv_installer
 
 CANVAS = 500
 #: Multiplier applied when exporting, so saved images are not stuck at 500x500.
@@ -456,6 +457,8 @@ class GlobalPlugin(_GlobalPluginBase):
 		self._dialog = None
 		ch.init_config()
 		cache.load_cache()
+		# Picks up OpenCV if it was downloaded during an earlier session.
+		opencv_installer.add_to_path()
 
 	def terminate(self):
 		if self._dialog:
