@@ -12,7 +12,6 @@ import threading
 import base64
 import re
 from gui import guiHelper
-from gui.settingsDialogs import SettingsPanel, NVDASettingsDialog
 import ui
 import tones
 from globalPluginHandler import GlobalPlugin
@@ -29,46 +28,6 @@ from . import description_service
 from . import cache
 from . import local_geometry
 
-GEMINI_MODELS = [
-	"deep-research-preview-04-2026",
-	"deep-research-max-preview-04-2026",
-	"gemini-3-flash-preview",
-	"gemini-3.1-pro-preview",
-	"gemini-3.1-flash-lite-preview",
-	"gemini-3.1-flash-image-preview",
-	"gemini-3-pro-image-preview",
-	"gemini-2.5-flash-image",
-	"gemini-2.5-pro",
-	"gemini-pro-latest",
-	"gemini-flash-latest",
-	"gemini-flash-lite-latest",
-	"gemini-2.5-flash",
-	"gemini-2.5-flash-lite",
-	"gemini-2.0-flash",
-	"gemini-2.0-flash-lite",
-	"gemini-robotics-er-1.6-preview",
-	"gemini-robotics-er-1.5-preview",
-	"gemini-3.1-flash-live-preview",
-	"gemini-3.1-flash-tts-preview",
-]
-
-class MathDrawSettingsPanel(SettingsPanel):
-	title = "Math Draw"
-	def makeSettings(self, settingsSizer):
-		sHelper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
-		self.api_key_ctrl = sHelper.addLabeledControl("&Gemini API Key:", wx.TextCtrl)
-		self.api_key_ctrl.SetValue(ch.config["global"].get("api_key", ""))
-		self.model_choice = sHelper.addLabeledControl("&Gemini Model:", wx.Choice, choices=GEMINI_MODELS)
-		model = ch.config["global"].get("model", "gemini-3.1-pro-preview")
-		if model in GEMINI_MODELS:
-			self.model_choice.SetSelection(GEMINI_MODELS.index(model))
-		else:
-			self.model_choice.SetSelection(3) # Default to 3.1 Pro Preview
-
-	def onSave(self):
-		ch.config["global"]["api_key"] = self.api_key_ctrl.GetValue().strip()
-		ch.config["global"]["model"] = GEMINI_MODELS[self.model_choice.GetSelection()]
-		ch.save()
 
 class MathDrawDialog(wx.Dialog):
 	def __init__(self, parent):
@@ -205,8 +164,16 @@ class MathDrawDialog(wx.Dialog):
 		gc = wx.GraphicsContext.Create(dc)
 		if not gc: return bmp
 
-		gc.SetPen(wx.Pen(wx.BLACK, 2))
-		gc.SetBrush(wx.TRANSPARENT_BRUSH)
+		gc.SetAntialiasMode(wx.ANTIALIAS_DEFAULT)
+		
+		# High quality professional math styling
+		pen = wx.Pen(wx.Colour(0, 51, 153), 3) # Deep professional blue
+		pen.SetJoin(wx.JOIN_MITER)
+		gc.SetPen(pen)
+		
+		# Very subtle light blue fill for shapes to make them pop out
+		brush = wx.Brush(wx.Colour(230, 240, 255, 120))
+		gc.SetBrush(brush)
 
 		if isinstance(res, dict):
 
@@ -316,13 +283,9 @@ class GlobalPlugin(GlobalPlugin):
 		super(GlobalPlugin, self).__init__(*args, **kwargs)
 		ch.init_config()
 		cache.load_cache()
-		if MathDrawSettingsPanel not in NVDASettingsDialog.categoryClasses:
-			NVDASettingsDialog.categoryClasses.append(MathDrawSettingsPanel)
 
 	def terminate(self):
 		super(GlobalPlugin, self).terminate()
-		if MathDrawSettingsPanel in NVDASettingsDialog.categoryClasses:
-			NVDASettingsDialog.categoryClasses.remove(MathDrawSettingsPanel)
 
 	def script_open_math_draw(self, gesture):
 		global _math_draw_dialog

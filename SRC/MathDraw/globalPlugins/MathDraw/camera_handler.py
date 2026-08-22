@@ -64,6 +64,72 @@ def get_device_list():
 			break
 	return devices
 
+class CameraDialog(wx.Dialog):
+	def __init__(self, parent, camera_index):
+		super().__init__(parent, title="Math Draw - Camera", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+		self.camera_index = camera_index
+		self.cap = cv2.VideoCapture(camera_index)
+		
+		main_sizer = wx.BoxSizer(wx.VERTICAL)
+		
+		# Preview area (placeholder if we can't do true live feed easily in NVDA context, 
+		# but we'll try to show frames)
+		self.preview_bmp = wx.StaticBitmap(self, size=(640, 480))
+		main_sizer.Add(self.preview_bmp, 0, wx.ALIGN_CENTER | wx.ALL, 5)
+		
+		self.status_bar = wx.StaticText(self, label="Status: Initializing...")
+		main_sizer.Add(self.status_bar, 0, wx.EXPAND | wx.ALL, 5)
+		
+		btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+		self.capture_btn = wx.Button(self, label="&Take Picture")
+		self.capture_btn.Bind(wx.EVT_BUTTON, self.on_capture)
+		btn_sizer.Add(self.capture_btn, 1, wx.EXPAND | wx.ALL, 5)
+		
+		self.close_btn = wx.Button(self, label="&Close", id=wx.ID_CANCEL)
+		btn_sizer.Add(self.close_btn, 1, wx.EXPAND | wx.ALL, 5)
+		
+		main_sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 5)
+		
+		self.SetSizer(main_sizer)
+		main_sizer.Fit(self)
+		
+		self.timer = wx.Timer(self)
+		self.Bind(wx.EVT_TIMER, self.on_timer, self.timer)
+		self.timer.Start(100) # 10 FPS
+		
+		self.last_frame = None
+		self.is_captured = False
+
+	def on_timer(self, event):
+		if self.is_captured: return
+		ret, frame = self.cap.read()
+		if ret:
+			self.last_frame = frame
+			# Blur detection
+			gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+			laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+			status = "Ready"
+			if laplacian_var < 100:
+				status = "Too blurry - please steady the camera or adjust focus."
+			
+			self.status_bar.SetLabel(f"Status: {status} (Clarity: {int(laplacian_var)})")
+			
+			# Convert frame to wx.Bitmap for preview
+			height, width = frame.shape[:2]
+			frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+			bmp = wx.Bitmap.FromBuffer(width, height, frame_rgb)
+			self.preview_bmp.SetBitmap(bmp)
+
+	def on_capture(self, event):
+		if self.last_frame is not None:
+			self.is_captured = True
+			self.timer.Stop()
+			self.cap.release()
+			self.EndModal(wx.ID_OK)
+
+	def get_frame(self):
+		return self.last_frame
+
 def capture_and_draw(dialog):
 	if not HAS_CV2:
 		ui.message("Error: OpenCV (cv2) not found. Cannot use camera features.")
@@ -74,43 +140,22 @@ def capture_and_draw(dialog):
 		ui.message("No cameras found.")
 		return
 
+	camera_index = 0
 	if len(devices) > 1:
 		chooser = DeviceChooser(dialog, devices)
 		if chooser.ShowModal() == wx.ID_OK:
 			camera_index = chooser.get_selected_index()
 		else:
 			return
-	else:
-		camera_index = 0
 
-	ui.message("Starting camera...")
-	threading.Thread(target=_threaded_capture, args=(dialog, camera_index)).start()
-
-def _threaded_capture(dialog, index):
-	cap = cv2.VideoCapture(index)
-	if not cap.isOpened():
-		wx.CallAfter(ui.message, "Failed to open camera.")
-		return
-
-	# Take a few frames to let camera auto-adjust
-	for _ in range(10):
-		cap.read()
-	
-	ret, frame = cap.read()
-	cap.release()
-
-	if not ret:
-		wx.CallAfter(ui.message, "Failed to capture image.")
-		return
-
-	# Simple "tactile diagram" detection logic
-	# We look for contours that look like geometric shapes
-	description = _detect_shape_in_frame(frame)
-	
-	if description:
-		wx.CallAfter(_ask_to_draw, dialog, frame, description)
-	else:
-		wx.CallAfter(ui.message, "No clear geometric figure detected in camera view.")
+	cam_dialog = CameraDialog(dialog, camera_index)
+	if cam_dialog.ShowModal() == wx.ID_OK:
+		frame = cam_dialog.get_frame()
+		description = _detect_shape_in_frame(frame)
+		if description:
+			_ask_to_draw(dialog, frame, description)
+		else:
+			ui.message("No clear geometric figure detected.")
 
 def _get_shape_name(c):
 	peri = cv2.arcLength(c, True)

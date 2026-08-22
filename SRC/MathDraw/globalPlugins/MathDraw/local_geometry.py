@@ -1,16 +1,11 @@
 import math
 import re
+import difflib
 
 def get_best_scale(max_dim, target=400):
 	if max_dim <= 0: return 1
 	if max_dim * 38 <= target: return 38
 	return target / max_dim
-
-def cm_to_px(cm, scale=38):
-	try:
-		return float(cm) * scale
-	except:
-		return 100
 
 def _scale_ops(ops, factor, center=(250, 250)):
 	for op in ops:
@@ -41,19 +36,6 @@ def _scale_ops(ops, factor, center=(250, 250)):
 			op['cy'] = center[1] + (op['cy'] - center[1]) * factor
 	return ops
 
-def extract_coords(text):
-	coord_patterns = [
-		r'\(?\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\)?',
-		r'x\s*(?:axis)?\s*(?:as|is|=)?\s*(-?\d+\.?\d*).*?y\s*(?:axis)?\s*(?:as|is|=)?\s*(-?\d+\.?\d*)',
-	]
-	coords = []
-	for p in coord_patterns:
-		found = re.findall(p, text)
-		if found:
-			coords.extend([(float(x), float(y)) for x, y in found])
-			break
-	return coords
-
 def draw_dimension(ops, x1, y1, x2, y2, text, offset=35):
 	dx, dy = x2 - x1, y2 - y1
 	dist = math.sqrt(dx*dx + dy*dy)
@@ -67,174 +49,166 @@ def draw_dimension(ops, x1, y1, x2, y2, text, offset=35):
 	ops.append({'type': 'line', 'x1': ox2-tx, 'y1': oy2-ty, 'x2': ox2+tx, 'y2': oy2+ty})
 	ops.append({'type': 'text', 'x': (ox1+ox2)/2 + nx*15, 'y': (oy1+oy2)/2 + ny*15, 'text': text})
 
-def find_local_match(description, is_recursive=False):
-	desc = description.lower()
-	from . import config_handler as ch
-	api_key = ch.config["global"].get("api_key")
+SHAPES = ['circle', 'square', 'rectangle', 'triangle', 'rhombus', 'parallelogram', 'pentagon', 'hexagon', 'octagon']
+SYNONYMS = {
+	'box': 'rectangle',
+	'round': 'circle',
+	'quadrilateral': 'rectangle',
+	'trigangle': 'triangle',
+	'tringle': 'triangle'
+}
 
-	# Resilience to common typos
-	desc = desc.replace("trigangle", "triangle").replace("tryangle", "triangle")
-	desc = desc.replace("bregth", "breadth").replace("lenght", "length")
-	desc = desc.replace("lable", "label").replace("indside", "inside")
-	desc = desc.replace("parallelogramm", "parallelogram").replace("rhombous", "rhombus")
+def extract_numbers(text):
+	return [float(x) for x in re.findall(r'(\d+(?:\.\d+)?)', text)]
 
-	# Multi-instruction support
-	if not is_recursive:
-		parts = re.split(r'\.|\band\s+then\b|\bthen\b|;|\band\s+(?=label|draw|put|place)', desc)
-		if len(parts) > 1:
-			all_ops = []
-			titles = []
-			for p in parts:
-				p = p.strip()
-				if not p or len(p) < 3: continue
-				res = find_local_match(p, is_recursive=True)
-				if res:
-					all_ops.extend(res.get('ops', []))
-					titles.append(res.get('title', p))
-			if all_ops:
-				return {'title': ". ".join(titles), 'ops': all_ops}
-
-	# Labeling support
-	label_as_match = re.search(r'(?:label|lable)\s+(?:the\s+)?(big|small|large|inner|outer|first|second\s+)?(\w+)\s+(?:as|is|=)\s*([a-z0-9])', desc)
-	if label_as_match:
-		qualifier = label_as_match.group(1) or ""
-		target_shape = label_as_match.group(2)
-		label_char = label_as_match.group(3).upper()
-		x, y = 250, 250
-		if "big" in qualifier or "outer" in qualifier: y -= 100
-		elif "small" in qualifier or "inner" in qualifier: y += 20
-		return {'title': f"Label {qualifier}{target_shape} as {label_char}", 'ops': [{'type': 'text', 'x': x, 'y': y, 'text': label_char}]}
-
-	# Nested shapes
-	inside_match = re.search(r'(.*?)\s+inside\s+(.*)', desc)
-	if inside_match:
-		inner_txt = inside_match.group(1).strip()
-		outer_txt = inside_match.group(2).strip()
-		inner_res = find_local_match(inner_txt, is_recursive=True)
-		outer_res = find_local_match(outer_txt, is_recursive=True)
-		if inner_res and outer_res:
-			inner_ops = _scale_ops(inner_res['ops'], 0.5)
-			return {'title': f"{inner_res['title']} inside {outer_res['title']}", 'ops': outer_res['ops'] + inner_ops}
-
-	# Crossing lines
-	if "crossing" in desc and ("lines" in desc or "line" in desc):
+def parse_shape(desc, default_scale=400):
+	# Identify shape
+	words = re.findall(r'\w+', desc.lower())
+	found_shape = None
+	for w in words:
+		if w in SYNONYMS: w = SYNONYMS[w]
+		matches = difflib.get_close_matches(w, SHAPES, n=1, cutoff=0.8)
+		if matches:
+			found_shape = matches[0]
+			break
+	
+	if not found_shape:
+		return None
+		
+	nums = extract_numbers(desc)
+	ops = []
+	title = ""
+	
+	if found_shape == 'circle':
+		r = nums[0] if nums else 5
+		scale = get_best_scale(r*2, default_scale)
+		ops = [{'type': 'circle', 'cx': 250, 'cy': 250, 'r': r * scale}]
+		title = f"A circle with radius {r}"
+		return {'title': title, 'ops': ops, 'bounds': (r*scale*2, r*scale*2)}
+		
+	elif found_shape == 'square':
+		side = nums[0] if nums else 10
+		scale = get_best_scale(side, default_scale)
+		w = side * scale
+		x, y = 250 - w/2, 250 - w/2
+		ops = [{'type': 'rect', 'x': x, 'y': y, 'w': w, 'h': w}]
+		title = f"A square of side {side}"
+		return {'title': title, 'ops': ops, 'bounds': (w, w)}
+		
+	elif found_shape == 'rectangle':
+		w_val = nums[0] if len(nums) > 0 else 10
+		h_val = nums[1] if len(nums) > 1 else w_val/2
+		scale = get_best_scale(max(w_val, h_val), default_scale)
+		w, h = w_val * scale, h_val * scale
+		x, y = 250 - w/2, 250 - h/2
+		ops = [{'type': 'rect', 'x': x, 'y': y, 'w': w, 'h': h}]
+		title = f"A rectangle {w_val} by {h_val}"
+		return {'title': title, 'ops': ops, 'bounds': (w, h)}
+		
+	elif found_shape == 'triangle':
+		s1 = nums[0] if len(nums) > 0 else 10
+		s2 = nums[1] if len(nums) > 1 else s1
+		scale = get_best_scale(max(s1, s2), default_scale)
+		s1, s2 = s1*scale, s2*scale
 		cx, cy = 250, 250
-		l = 175
-		ops = [
-			{'type': 'line', 'x1': cx-l, 'y1': cy-l, 'x2': cx+l, 'y2': cy+l},
-			{'type': 'line', 'x1': cx-l, 'y1': cy+l, 'x2': cx+l, 'y2': cy-l},
-			{'type': 'point', 'x': cx, 'y': cy, 'label': 'O'},
-			{'type': 'text', 'x': cx-l-15, 'y': cy-l-15, 'text': 'A'},
-			{'type': 'text', 'x': cx+l+15, 'y': cy+l+15, 'text': 'B'},
-			{'type': 'text', 'x': cx-l-15, 'y': cy+l+15, 'text': 'C'},
-			{'type': 'text', 'x': cx+l+15, 'y': cy-l-15, 'text': 'D'},
-		]
-		if "angle" in desc:
-			ops.extend([
-				{'type': 'arc', 'cx': cx, 'cy': cy, 'r': 30, 'start_deg': -135, 'end_deg': -45},
-				{'type': 'arc', 'cx': cx, 'cy': cy, 'r': 30, 'start_deg': 45, 'end_deg': 135},
-			])
-		return {'title': "Crossing lines labeled A, B, C, D with center O", 'ops': ops}
-
-	# Line divided into sections
-	section_match = re.search(r'line\s+([a-z]{2})\s+divided\s+into\s+(\d+)\s+sections.*?(?:by|with)?\s*([a-z\s,]+)?', desc)
-	if section_match:
-		line_labels = section_match.group(1).upper()
-		num_sections = int(section_match.group(2))
-		div_labels = [l.strip().upper() for l in re.split(r'[,&]|\band\b', section_match.group(3) or "") if l.strip()]
-		y, x_start, x_end = 250, 100, 400
-		ops = [{'type': 'line', 'x1': x_start, 'y1': y, 'x2': x_end, 'y2': y}]
-		ops.append({'type': 'text', 'x': x_start - 15, 'y': y, 'text': line_labels[0]})
-		ops.append({'type': 'text', 'x': x_end + 15, 'y': y, 'text': line_labels[1]})
-		for i in range(1, num_sections):
-			ratio = i / num_sections
-			px = x_start + (x_end - x_start) * ratio
-			label = div_labels[i-1] if i-1 < len(div_labels) else f"P{i}"
-			ops.append({'type': 'circle', 'cx': px, 'cy': y, 'r': 4})
-			ops.append({'type': 'text', 'x': px, 'y': y-15, 'text': label})
-		return {'title': f"Line {line_labels} divided into {num_sections} sections", 'ops': ops}
-
-	# Triangles
-	if "triangle" in desc or "tryangle" in desc:
-		coords = extract_coords(desc)
-		if len(coords) >= 3:
-			pts_raw = coords[:3]
-			all_x = [p[0] for p in pts_raw]
-			all_y = [p[1] for p in pts_raw]
-			min_x, max_x = min(all_x), max(all_x)
-			min_y, max_y = min(all_y), max(all_y)
-			w, h = max(0.1, max_x - min_x), max(0.1, max_y - min_y)
-			scale = get_best_scale(max(w, h), 350)
-			cx, cy = (min_x + max_x)/2, (min_y + max_y)/2
-			pts = [(250 + (x-cx)*scale, 250 - (y-cy)*scale) for x, y in pts_raw]
-			return {'title': f"A triangle with vertices at {pts_raw[0]}, {pts_raw[1]}, {pts_raw[2]}", 'ops': [{'type': 'polygon', 'points': pts}]}
-		
-		# Check for string/variable vertices like (x_1, y_1)
-		var_coords = re.findall(r'\(\s*([a-z0-9_]+)\s*,\s*([a-z0-9_]+)\s*\)', desc)
-		if len(var_coords) >= 3:
-			cx, cy = 250, 250
-			s1 = 200
+		if 'right' in desc.lower():
+			pts = [(cx - s1/2, cy + s2/2), (cx + s1/2, cy + s2/2), (cx - s1/2, cy - s2/2)]
+		else:
 			pts = [(cx, cy - s1/2), (cx - s1/2, cy + s1/2), (cx + s1*0.8, cy + s1/2)]
-			ops = [{'type': 'polygon', 'points': pts}]
-			ops.append({'type': 'text', 'x': pts[0][0], 'y': pts[0][1]-15, 'text': f"({var_coords[0][0]},{var_coords[0][1]})"})
-			ops.append({'type': 'text', 'x': pts[1][0]-25, 'y': pts[1][1]+20, 'text': f"({var_coords[1][0]},{var_coords[1][1]})"})
-			ops.append({'type': 'text', 'x': pts[2][0]+25, 'y': pts[2][1]+20, 'text': f"({var_coords[2][0]},{var_coords[2][1]})"})
-			return {'title': f"A triangle with vertices ({var_coords[0][0]},{var_coords[0][1]}), ({var_coords[1][0]},{var_coords[1][1]}), ({var_coords[2][0]},{var_coords[2][1]})", 'ops': ops}
+		ops = [{'type': 'polygon', 'points': pts}]
+		title = "A triangle"
+		return {'title': title, 'ops': ops, 'bounds': (s1, s1)}
 		
-		# If vertex or coords mentioned but not parsed, fall through to AI if available
-		if ("vertex" in desc or "(" in desc) and api_key:
-			pass 
-		else:
-			nums = re.findall(r'(\d+(?:\.\d+)?)', desc)
-			v1 = float(nums[0]) if len(nums) > 0 else 10
-			v2 = float(nums[1]) if len(nums) > 1 else v1
-			scale = get_best_scale(max(v1, v2), 400)
-			s1, s2 = v1 * scale, v2 * scale
-			cx, cy = 250, 250
-			if "equilateral" in desc:
-				h = (math.sqrt(3)/2) * s1
-				pts = [(cx, cy - 2*h/3), (cx - s1/2, cy + h/3), (cx + s1/2, cy + h/3)]
-			elif "right" in desc:
-				pts = [(cx - s1/2, cy + s2/2), (cx + s1/2, cy + s2/2), (cx - s1/2, cy - s2/2)]
-			elif "isosceles" in desc:
-				pts = [(cx, cy - s2/2), (cx - s1/2, cy + s2/2), (cx + s1/2, cy + s2/2)]
-			else:
-				# Default scalene
-				pts = [(cx, cy - s1/2), (cx - s1/2, cy + s1/2), (cx + s1*0.8, cy + s1/2)]
-			return {'title': "A triangle", 'ops': [{'type': 'polygon', 'points': pts}]}
-
-	# Rhombus
-	diag_match = re.search(r'rhombus.*?(?:diagonal|length|of)?\s*(\d+(?:\.\d+)?).*?(?:and|&|x|ratio)?\s*(\d+(?:\.\d+)?)', desc)
-	if diag_match or ("rhombus" in desc and len(re.findall(r'\d+', desc)) >= 2):
-		if diag_match:
-			v1, v2 = float(diag_match.group(1)), float(diag_match.group(2))
-		else:
-			nums = re.findall(r'(\d+(?:\.\d+)?)', desc)
-			v1, v2 = float(nums[0]), float(nums[1])
-		scale = get_best_scale(max(v1, v2), 400)
-		d1, d2 = v1 * scale, v2 * scale
+	elif found_shape in ['pentagon', 'hexagon', 'octagon']:
+		sides = {'pentagon': 5, 'hexagon': 6, 'octagon': 8}[found_shape]
+		v = nums[0] if nums else 5
+		scale = get_best_scale(v*2, default_scale)
+		r = v * scale
+		pts = []
+		for i in range(sides):
+			angle = math.radians(-90 + i * (360 / sides))
+			pts.append((250 + r * math.cos(angle), 250 + r * math.sin(angle)))
+		ops = [{'type': 'polygon', 'points': pts}]
+		title = f"A regular {found_shape}"
+		return {'title': title, 'ops': ops, 'bounds': (r*2, r*2)}
+		
+	elif found_shape == 'rhombus':
+		d1 = nums[0] if len(nums) > 0 else 10
+		d2 = nums[1] if len(nums) > 1 else d1
+		scale = get_best_scale(max(d1, d2), default_scale)
+		d1, d2 = d1*scale, d2*scale
 		cx, cy = 250, 250
 		pts = [(cx, cy - d2/2), (cx + d1/2, cy), (cx, cy + d2/2), (cx - d1/2, cy)]
 		ops = [{'type': 'polygon', 'points': pts}]
 		ops.append({'type': 'line', 'x1': pts[0][0], 'y1': pts[0][1], 'x2': pts[2][0], 'y2': pts[2][1]})
 		ops.append({'type': 'line', 'x1': pts[1][0], 'y1': pts[1][1], 'x2': pts[3][0], 'y2': pts[3][1]})
-		ops.append({'type': 'text', 'x': cx + 15, 'y': cy - d2/4, 'text': f"{v2}cm"})
-		ops.append({'type': 'text', 'x': cx + d1/4, 'y': cy - 15, 'text': f"{v1}cm"})
-		return {'title': f"A rhombus with diagonals {v1}cm and {v2}cm", 'ops': ops}
+		title = "A rhombus"
+		return {'title': title, 'ops': ops, 'bounds': (d1, d2)}
 
-	# Rectangle/Square
-	rect_match = re.search(r'(?:rectangle|square).*?(?:length|side|width)?\s*(?:of)?\s*(\d+(?:\.\d+)?)(?:.*?(?:breadth|bregth|width|by|x|and)\s*(\d+(?:\.\d+)?))?', desc)
-	if rect_match:
-		v1 = float(rect_match.group(1))
-		v2 = float(rect_match.group(2)) if rect_match.group(2) else v1
-		scale = get_best_scale(max(v1, v2), 400)
-		w, h = v1 * scale, v2 * scale
-		x, y = (500-w)/2, (500-h)/2
-		ops = [{'type': 'rect', 'x': x, 'y': y, 'w': w, 'h': h}]
-		draw_dimension(ops, x, y+h, x+w, y+h, f"{v1}cm", offset=35)
-		if v1 != v2 or "rectangle" in desc:
-			draw_dimension(ops, x+w, y+h, x+w, y, f"{v2}cm", offset=35)
-		return {'title': f"A {'square' if v1==v2 and 'square' in desc else 'rectangle'} {v1}x{v2}", 'ops': ops}
+	return None
+
+def find_local_match(description, is_recursive=False):
+	desc = description.lower()
+	
+	# Detect relationships
+	inside_match = re.search(r'(.*?)\s+(inside|in|inscribed in)\s+(.*)', desc)
+	if inside_match:
+		inner_desc = inside_match.group(1).strip()
+		outer_desc = inside_match.group(3).strip()
+		
+		inner_res = parse_shape(inner_desc)
+		outer_res = parse_shape(outer_desc)
+		
+		if inner_res and outer_res:
+			ops = list(outer_res['ops'])
+			# Check constraints
+			if 'touching' in desc or 'inscribed' in desc:
+				# Scale inner shape to exactly fit outer shape bounds
+				ow, oh = outer_res['bounds']
+				iw, ih = inner_res['bounds']
+				# For square in circle, diagonal = diameter
+				if 'square' in inner_desc and 'circle' in outer_desc:
+					# circle diameter is ow. Square diagonal is ow.
+					# Square side = ow / sqrt(2)
+					target_side = ow / math.sqrt(2)
+					scale_factor = target_side / iw
+				else:
+					scale_factor = min(ow/iw, oh/ih) * 0.95 # slightly smaller or exact
+			else:
+				scale_factor = 0.5
+				
+			scaled_inner = _scale_ops(inner_res['ops'], scale_factor)
+			ops.extend(scaled_inner)
+			return {'title': f"{inner_res['title']} inside {outer_res['title']}", 'ops': ops}
+			
+
+	# Coordinate Geometry
+	coord_matches = re.findall(r'(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)', desc)
+	if coord_matches or 'coordinate' in desc or 'origin' in desc or 'axis' in desc:
+		# Draw coordinate axes
+		ops = [
+			{'type': 'line', 'x1': 50, 'y1': 250, 'x2': 450, 'y2': 250}, # X axis
+			{'type': 'line', 'x1': 250, 'y1': 50, 'x2': 250, 'y2': 450}, # Y axis
+			{'type': 'point', 'x': 250, 'y': 250, 'label': 'O (0,0)'}     # Origin
+		]
+		
+		if coord_matches:
+			coords = [(float(x), float(y)) for x, y in coord_matches]
+			# Find best scale
+			max_val = max(max(abs(x), abs(y)) for x, y in coords) if coords else 10
+			scale = get_best_scale(max_val, 180) # leave margin
+			
+			for i, (x, y) in enumerate(coords):
+				px = 250 + x * scale
+				py = 250 - y * scale
+				label = chr(65 + i) # A, B, C...
+				ops.append({'type': 'circle', 'cx': px, 'cy': py, 'r': 4})
+				ops.append({'type': 'text', 'x': px + 15, 'y': py - 15, 'text': f"{label}({x},{y})"})
+				
+			return {'title': "Coordinate Plane with points", 'ops': ops}
+		elif 'origin' in desc or 'axis' in desc:
+			return {'title': "Coordinate Plane", 'ops': ops}
+
 
 	# Angles
 	angle_match = re.search(r'angle\s*(?:of)?\s*(\d+)\s*(?:degrees|deg)?', desc)
@@ -249,40 +223,6 @@ def find_local_match(description, is_recursive=False):
 			{'type': 'text', 'x': cx+60, 'y': cy-30, 'text': f"{int(deg)}°"}
 		]
 		return {'title': f"An angle of {deg} degrees", 'ops': ops}
-
-	# Regular Polygons
-	poly_match = re.search(r'(pentagon|hexagon|heptagon|octagon|nonagon|decagon).*?(?:side|radius)?\s*(\d+(?:\.\d+)?)?', desc)
-	if poly_match:
-		shape = poly_match.group(1)
-		sides = {"pentagon": 5, "hexagon": 6, "heptagon": 7, "octagon": 8, "nonagon": 9, "decagon": 10}[shape]
-		v = float(poly_match.group(2)) if poly_match.group(2) else 5
-		scale = get_best_scale(v*2, 400)
-		r = v * scale
-		pts = []
-		for i in range(sides):
-			angle = math.radians(-90 + i * (360 / sides))
-			pts.append((250 + r * math.cos(angle), 250 + r * math.sin(angle)))
-		return {'title': f"A regular {shape}", 'ops': [{'type': 'polygon', 'points': pts}]}
-
-	# Circle
-	if "circle" in desc:
-		match = re.search(r'radius\s*(\d+(?:\.\d+)?)', desc)
-		v = float(match.group(1)) if match else 5
-		scale = get_best_scale(v*2, 400)
-		return {'title': f"A circle with radius {v}cm", 'ops': [{'type': 'circle', 'cx': 250, 'cy': 250, 'r': v * scale}]}
-
-	# Coordinate Plane fallback
-	coords = extract_coords(desc)
-	if coords:
-		all_vals = [abs(v) for p in coords for v in p] + [5]
-		scale = get_best_scale(max(all_vals), 200)
-		ops = [{'type': 'line', 'x1': 0, 'y1': 250, 'x2': 500, 'y2': 250}, {'type': 'line', 'x1': 250, 'y1': 0, 'x2': 250, 'y2': 500}]
-		for i, (x, y) in enumerate(coords):
-			px, py = 250 + x*scale, 250 - y*scale
-			label = chr(65+i)
-			ops.append({'type': 'circle', 'cx': px, 'cy': py, 'r': 5})
-			ops.append({'type': 'text', 'x': px+10, 'y': py-10, 'text': label})
-		return {'title': "Coordinate plane with points", 'ops': ops}
 
 	# Parabola
 	if "parabola" in desc:
@@ -306,26 +246,123 @@ def find_local_match(description, is_recursive=False):
 			ops.append({'type': 'line', 'x1': pts[i][0], 'y1': pts[i][1], 'x2': pts[i+1][0], 'y2': pts[i+1][1]})
 		return {'title': f"{trig_match.group(1).capitalize()} wave", 'ops': ops}
 
-	# AI fallback
-	if api_key:
-		import urllib.request, json
-		try:
-			model = ch.config["global"].get("model", "gemini-1.5-pro")
-			url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-			prompt = f"Return ONLY raw JSON for this geometry description: \"{description}\". Coordinate space 0-500. JSON format: {{\"title\": \"...\", \"ops\": [{{ \"type\": \"line\", \"x1\":..., \"y1\":..., \"x2\":..., \"y2\":... }}, ...]}}. Supported types: line, rect, circle, ellipse, polygon (points: [[x,y],...]), text (x,y,text)."
-			payload = {"contents": [{"parts": [{"text": prompt}]}]}
-			req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
-			with urllib.request.urlopen(req, timeout=10) as response:
-				res = json.loads(response.read().decode('utf-8'))
-				text = res['candidates'][0]['content']['parts'][0]['text'].strip()
-				if text.startswith("```"): text = re.sub(r'^```(?:json)?\n?|\n?```$', '', text, flags=re.MULTILINE).strip()
-				instr = json.loads(text)
-				if 'ops' in instr:
-					for op in instr['ops']:
-						if op.get('type') == 'polygon': op['points'] = [tuple(p) for p in op['points']]
-				return instr
-		except: pass
-	return None
+	# Number Line
+	if "number line" in desc:
+		# 1. Irrational (Square Roots)
+		root_match = re.search(r'(?:square\s+root|sqrt|root)\s*(?:of)?\s*(\d+)', desc)
+		if root_match:
+			val = int(root_match.group(1))
+			y, x0 = 350, 100
+			unit = 120
+			ops = [{'type': 'line', 'x1': 50, 'y1': y, 'x2': 450, 'y2': y}]
+			for i in range(4):
+				ops.append({'type': 'line', 'x1': x0 + i*unit, 'y1': y-5, 'x2': x0 + i*unit, 'y2': y+5})
+				ops.append({'type': 'text', 'x': x0 + i*unit, 'y': y+20, 'text': str(i)})
+			
+			if val == 5:
+				bx2 = x0 + 2*unit
+				ops.append({'type': 'line', 'x1': x0, 'y1': y, 'x2': bx2, 'y2': y}) 
+				vx, vy = bx2, y - unit
+				ops.append({'type': 'line', 'x1': bx2, 'y1': y, 'x2': vx, 'y2': vy})
+				ops.append({'type': 'line', 'x1': x0, 'y1': y, 'x2': vx, 'y2': vy})
+				ops.append({'type': 'text', 'x': (x0 + vx)/2 - 15, 'y': (y + vy)/2 - 10, 'text': "√5"})
+				dist5 = unit * math.sqrt(5)
+				start_angle = -math.degrees(math.atan2(unit, 2*unit))
+				ops.append({'type': 'arc', 'cx': x0, 'cy': y, 'r': dist5, 'start_deg': start_angle, 'end_deg': 0})
+				ops.append({'type': 'point', 'x': x0 + dist5, 'y': y, 'label': '√5'})
+			else:
+				ops.append({'type': 'line', 'x1': x0, 'y1': y, 'x2': x0 + unit, 'y2': y})
+				ops.append({'type': 'line', 'x1': x0 + unit, 'y1': y, 'x2': x0 + unit, 'y2': y - unit})
+				ops.append({'type': 'line', 'x1': x0, 'y1': y, 'x2': x0 + unit, 'y2': y - unit})
+				
+				if val >= 2:
+					dist2 = unit * math.sqrt(2)
+					ops.append({'type': 'arc', 'cx': x0, 'cy': y, 'r': dist2, 'start_deg': -45, 'end_deg': 0})
+					ops.append({'type': 'point', 'x': x0 + dist2, 'y': y, 'label': '√2'})
+					
+					if val >= 3:
+						dx, dy = unit, -unit
+						mag = math.sqrt(dx*dx + dy*dy)
+						nx, ny = -dy/mag * unit, dx/mag * unit
+						px, py = x0 + unit + nx, y - unit + ny
+						ops.append({'type': 'line', 'x1': x0 + unit, 'y1': y - unit, 'x2': px, 'y2': py})
+						ops.append({'type': 'line', 'x1': x0, 'y1': y, 'x2': px, 'y2': py})
+						dist3 = unit * math.sqrt(3)
+						ops.append({'type': 'arc', 'cx': x0, 'cy': y, 'r': dist3, 'start_deg': -math.degrees(math.atan2(y-py, px-x0)), 'end_deg': 0})
+						ops.append({'type': 'point', 'x': x0 + dist3, 'y': y, 'label': '√3'})
+
+			return {'title': f"Representing √{val} on number line", 'ops': ops}
+
+		# 2. Rational (Fractions)
+		frac_match = re.search(r'(-?\d+)\s*/\s*(\d+)', desc)
+		if frac_match:
+			num = int(frac_match.group(1))
+			den = int(frac_match.group(2))
+			if den == 0: den = 1
+			val = num / den
+			y, x_start, x_end = 250, 50, 450
+			ops = [{'type': 'line', 'x1': x_start, 'y1': y, 'x2': x_end, 'y2': y}]
+			
+			# Define range based on value
+			min_val = min(0, int(val) - 1)
+			max_val = max(0, int(val) + 1)
+			if max_val - min_val < 2: max_val = min_val + 2
+			
+			total_units = max_val - min_val
+			unit_px = (x_end - x_start) / total_units
+			
+			for i in range(min_val, max_val + 1):
+				px = x_start + (i - min_val) * unit_px
+				ops.append({'type': 'line', 'x1': px, 'y1': y-10, 'x2': px, 'y2': y+10})
+				ops.append({'type': 'text', 'x': px, 'y': y+25, 'text': str(i)})
+				
+				# Subdivisions
+				if i < max_val:
+					for j in range(1, den):
+						sub_px = px + j * (unit_px / den)
+						ops.append({'type': 'line', 'x1': sub_px, 'y1': y-5, 'x2': sub_px, 'y2': y+5})
+			
+			target_x = x_start + (val - min_val) * unit_px
+			ops.append({'type': 'point', 'x': target_x, 'y': y, 'label': f"{num}/{den}"})
+			return {'title': f"Representing fraction {num}/{den} on number line", 'ops': ops}
+
+		# 3. Decimals
+		val_match = re.search(r'(-?\d+(?:\.\d+)?)\s+on\s+number\s+line', desc)
+		if val_match:
+			val = float(val_match.group(1))
+			whole = int(val)
+			ops = []
+			y1, x_start, x_end = 100, 50, 450
+			ops.append({'type': 'line', 'x1': x_start, 'y1': y1, 'x2': x_end, 'y2': y1})
+			for i in range(11):
+				px = x_start + i * (x_end - x_start) / 10
+				ops.append({'type': 'line', 'x1': px, 'y1': y1-5, 'x2': px, 'y2': y1+5})
+				ops.append({'type': 'text', 'x': px, 'y': y1+20, 'text': str(whole + i - 1 if whole > 0 else i)})
+			
+			y2 = 300
+			ops.append({'type': 'line', 'x1': x_start, 'y1': y2, 'x2': x_end, 'y2': y2})
+			start_dec = round(val - 0.05, 2)
+			for i in range(11):
+				px = x_start + i * (x_end - x_start) / 10
+				label = f"{start_dec + i*0.01:.2f}"
+				ops.append({'type': 'line', 'x1': px, 'y1': y2-5, 'x2': px, 'y2': y2+5})
+				ops.append({'type': 'text', 'x': px, 'y': y2+20, 'text': label})
+			
+			target_x = x_start + (val - start_dec) / 0.1 * (x_end - x_start)
+			ops.append({'type': 'point', 'x': target_x, 'y': y2, 'label': str(val)})
+			return {'title': f"Representing {val} on number line", 'ops': ops}
+
+	# Basic parse
+	res = parse_shape(desc)
+	if res:
+		return {'title': res['title'], 'ops': res['ops']}
+		
+	# Fallback if entirely failed
+	return {
+		'title': 'Default Drawing (Could not parse description)', 
+		'ops': [{'type': 'circle', 'cx': 250, 'cy': 250, 'r': 150},
+				{'type': 'text', 'x': 250, 'y': 250, 'text': 'Unrecognized description'}]
+	}
 
 def get_svg_from_instr(instr):
 	svg = f'<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">\n'
@@ -335,17 +372,17 @@ def get_svg_from_instr(instr):
 		t = op['type']
 		if t == 'polygon':
 			pts = " ".join([f"{p[0]},{p[1]}" for p in op['points']])
-			svg += f'  <polygon points="{pts}" stroke="black" stroke-width="3" fill="none" />\n'
+			svg += f'  <polygon points="{pts}" stroke="#003399" stroke-width="3" fill="#e6f0ff" fill-opacity="0.5" stroke-linejoin="miter" />\n'
 		elif t == 'rect':
-			svg += f'  <rect x="{op["x"]}" y="{op["y"]}" width="{op["w"]}" height="{op["h"]}" stroke="black" stroke-width="3" fill="none" />\n'
+			svg += f'  <rect x="{op["x"]}" y="{op["y"]}" width="{op["w"]}" height="{op["h"]}" stroke="#003399" stroke-width="3" fill="#e6f0ff" fill-opacity="0.5" stroke-linejoin="miter" />\n'
 		elif t == 'circle':
-			svg += f'  <circle cx="{op["cx"]}" cy="{op["cy"]}" r="{op["r"]}" stroke="black" stroke-width="3" fill="none" />\n'
+			svg += f'  <circle cx="{op["cx"]}" cy="{op["cy"]}" r="{op["r"]}" stroke="#003399" stroke-width="3" fill="#e6f0ff" fill-opacity="0.5" />\n'
 		elif t == 'ellipse':
-			svg += f'  <ellipse cx="{op["cx"]}" cy="{op["cy"]}" rx="{op["rx"]}" ry="{op["ry"]}" stroke="black" stroke-width="3" fill="none" />\n'
+			svg += f'  <ellipse cx="{op["cx"]}" cy="{op["cy"]}" rx="{op["rx"]}" ry="{op["ry"]}" stroke="#003399" stroke-width="3" fill="#e6f0ff" fill-opacity="0.5" />\n'
 		elif t == 'line':
-			svg += f'  <line x1="{op["x1"]}" y1="{op["y1"]}" x2="{op["x2"]}" y2="{op["y2"]}" stroke="black" stroke-width="3" />\n'
+			svg += f'  <line x1="{op["x1"]}" y1="{op["y1"]}" x2="{op["x2"]}" y2="{op["y2"]}" stroke="#003399" stroke-width="3" />\n'
 		elif t == 'text':
-			svg += f'  <text x="{op["x"]}" y="{op["y"]}" text-anchor="middle" font-family="Arial" font-size="16" font-weight="bold">{op["text"]}</text>\n'
+			svg += f'  <text x="{op["x"]}" y="{op["y"]}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" fill="#001a4d">{op["text"]}</text>\n'
 		elif t == 'arc':
 			import math
 			r = op['r']
@@ -356,9 +393,9 @@ def get_svg_from_instr(instr):
 			x2 = op['cx'] + r * math.cos(end_rad)
 			y2 = op['cy'] + r * math.sin(end_rad)
 			large_arc = 1 if abs(op['end_deg'] - op['start_deg']) > 180 else 0
-			svg += f'  <path d="M {x1} {y1} A {r} {r} 0 {large_arc} 1 {x2} {y2}" stroke="black" stroke-width="3" fill="none" />\n'
+			svg += f'  <path d="M {x1} {y1} A {r} {r} 0 {large_arc} 1 {x2} {y2}" stroke="#003399" stroke-width="3" fill="none" />\n'
 		elif t == 'point':
-			svg += f'  <circle cx="{op["x"]}" cy="{op["y"]}" r="3" fill="black" />\n'
-			if 'label' in op: svg += f'  <text x="{op["x"]+5}" y="{op["y"]-5}" font-family="Arial" font-size="12" font-weight="bold">{op["label"]}</text>\n'
+			svg += f'  <circle cx="{op["x"]}" cy="{op["y"]}" r="4" fill="#001a4d" />\n'
+			if 'label' in op: svg += f'  <text x="{op["x"]+8}" y="{op["y"]-8}" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#001a4d">{op["label"]}</text>\n'
 	svg += '</svg>'
 	return svg

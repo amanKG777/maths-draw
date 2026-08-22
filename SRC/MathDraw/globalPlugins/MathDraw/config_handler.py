@@ -19,8 +19,6 @@ def init_config():
 	if not config:
 		config = {
 			"global": {
-				"api_key": "",
-				"model": "gemini-3.1-pro-preview",
 				"history": []
 			}
 		}
