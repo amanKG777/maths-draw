@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Math Draw</title>
+</head>
+<body>
+
+<h1>Math Draw</h1>
+
+<p>Math Draw turns a typed description of a shape into an actual drawing, and then
+describes that drawing back to you. Everything happens on your own machine - there
+is no internet connection involved and nothing is sent anywhere.</p>
+
+<p>Press <strong>NVDA+Alt+D</strong> to open it. You can change that from
+NVDA's Input Gestures dialog, under the Math Draw category.</p>
+
+<h2>Drawing something</h2>
+
+<p>Type what you want in the description box and press the Draw button. Plain
+English works best - "a circle of radius 5" rather than anything formal. When
+the drawing is ready you'll hear a short high beep and a summary of what was
+made.</p>
+
+<p>Shift+Up and Shift+Down move back and forth through descriptions you have
+used before, so you don't have to retype a long one.</p>
+
+<h2>What you can ask for</h2>
+
+<h3>Shapes</h3>
+
+<p>Circle, square, rectangle, triangle, rhombus, pentagon, hexagon and octagon.
+Numbers in the description are used as measurements:</p>
+
+<ul>
+<li>a circle of radius 5</li>
+<li>a square of side 10</li>
+<li>a rectangle 8 by 4</li>
+<li>a right triangle 6 8</li>
+<li>a rhombus 10 6</li>
+<li>a regular hexagon 5</li>
+</ul>
+
+<p>"Box" is understood as a rectangle and "round" as a circle. Common misspellings
+of triangle are picked up too. If you leave the numbers out, a sensible default
+size is used.</p>
+
+<h3>One shape inside another</h3>
+
+<ul>
+<li>a circle inside a square</li>
+<li>a square inscribed in a circle</li>
+</ul>
+
+<p>Saying "inscribed" or "touching" makes the inner shape as large as it can be
+while still fitting. Otherwise it is drawn at half size.</p>
+
+<h3>Coordinates</h3>
+
+<p>Write coordinate pairs as numbers separated by a comma and they will be plotted
+on a pair of axes, labelled A, B, C and so on:</p>
+
+<ul>
+<li>plot the points 3,4 and -2,5</li>
+<li>draw a coordinate plane</li>
+</ul>
+
+<h3>Angles and graphs</h3>
+
+<ul>
+<li>an angle of 60 degrees</li>
+<li>a parabola</li>
+<li>a sine wave</li>
+<li>a cosine curve</li>
+</ul>
+
+<h3>Number lines</h3>
+
+<p>These need the words "number line" in the description:</p>
+
+<ul>
+<li>represent square root of 5 on number line - draws the geometric construction,
+not just a dot</li>
+<li>represent 3/4 on number line - marks the fraction with the line divided into
+quarters</li>
+<li>represent 2.35 on number line - shows a second, zoomed in line underneath so
+you can see where the decimal falls</li>
+</ul>
+
+<h2>Exploring a drawing</h2>
+
+<p>A summary is spoken as soon as a drawing is finished, but the Explore list is
+where the detail is. Tab to it and use the arrow keys to move through the figure
+one element at a time. Each element is described - "circle, radius 190 pixels,
+centred in the centre", "line from the top left to the bottom right" - and given
+a short beep at the same time.</p>
+
+<p>The beep tells you where the element sits. A high note means near the top of
+the drawing and a low note means near the bottom. The sound moves to your left
+or right ear depending on which side of the drawing the element is on. With
+headphones on you can get a feel for the layout fairly quickly.</p>
+
+<h2>Saving and copying</h2>
+
+<p>Save image writes the drawing to a file. PNG and JPEG are ordinary pictures,
+saved at four times the size shown on screen so they stay sharp when enlarged
+or printed. SVG saves it as a vector, which can be scaled to any size at all
+and reopened in a drawing program later.</p>
+
+<p>Copy image puts the drawing on the clipboard so you can paste it straight into
+a document or an email. The description is attached as alternative text, so
+anyone reading it with a screen reader gets the description too.</p>
+
+<h2>Drawing from the camera</h2>
+
+<p>Draw from Camera points a webcam at a shape on paper or a board, works out what
+it is, and offers to redraw it. The preview tells you how clear the picture is,
+so you can steady the camera before taking it.</p>
+
+<p><strong>This needs OpenCV, which is not included with the add-on.</strong> Without
+it the button will report that OpenCV was not found and nothing else will happen.
+The rest of Math Draw works normally either way.</p>
+
+<h2>If a description isn't understood</h2>
+
+<p>You'll hear a low beep and a message saying so. Nothing is saved when that
+happens, so you can just reword it and try again. Naming the shape directly is
+usually enough to get it working - "a triangle" will always draw something,
+where "the thing from question 4" won't.</p>
+
+<h2>Licence</h2>
+
+<p>Math Draw is released under the GNU General Public License version 3. See the
+LICENSE file for the full text.</p>
+
+</body>
+</html>
